@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>LEGO 1x1 Plate Mosaic Maker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: sans-serif; background: #f5f5f5; margin: 0; padding: 0; }
+    .container { max-width: 900px; margin: 2em auto; background: #fff; border-radius: 10px; box-shadow: 0 0 12px #aaa; padding: 2em; }
+    canvas { background: #222; display: block; margin: 2em 0; }
+    input[type="file"] { margin-bottom: 1em; }
+    #instructions { white-space: pre; font-family: monospace; font-size: 1em; background: #f0f0f0; border: 1px solid #ccc; padding: 1em; border-radius: 6px; }
+    label { display: block; margin: 1em 0 0.5em 0; }
+    button { font-size: 1em; margin-top: 1em; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>LEGO 1x1 Plate Mosaic Maker</h1>
+    <label for="imgfile">Upload an image (jpg, png, gif, etc):</label>
+    <input type="file" id="imgfile" accept="image/*">
+    <label for="size">Mosaic width/height (tiles):</label>
+    <input type="number" id="size" value="48" min="8" max="128" step="1"> (square)
+    <button id="make">Generate Mosaic</button>
+    <br>
+    <canvas id="preview" width="480" height="480"></canvas>
+    <h2>Instructions (1x1 Plates)</h2>
+    <div id="instructions"></div>
+  </div>
+<script>
+// LEGO palette (simplified, can be extended)
+const LEGO_COLOURS = {
+  "white": [255,255,255],
+  "black": [33,33,33],
+  "red": [179,0,6],
+  "yellow": [247,209,23],
+  "blue": [0,85,191],
+  "green": [16,203,49],
+  "tan": [222,198,156],
+  "orange": [255,126,20],
+  "dark_bluish_gray": [89,93,96],
+  "light_bluish_gray": [175,181,199]
+};
+const COLOUR_NAMES = Object.keys(LEGO_COLOURS);
+
+// Utility: Euclidean RGB distance
+function dist(a, b) {
+  return Math.sqrt((a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2);
+}
+function closestLego(rgb) {
+  let best = COLOUR_NAMES[0], bestDist = 1e9;
+  for (const name of COLOUR_NAMES) {
+    const d = dist(rgb, LEGO_COLOURS[name]);
+    if (d < bestDist) { bestDist = d; best = name; }
+  }
+  return best;
+}
+
+// Draw a 1x1 "plate" with a circular stud
+function drawPlate(ctx, x, y, size, colour) {
+  // Draw square plate
+  ctx.fillStyle = `rgb(${colour.join(",")})`;
+  ctx.fillRect(x, y, size, size);
+  // Draw shadow for 3D effect
+  ctx.fillStyle = "rgba(0,0,0,0.08)";
+  ctx.fillRect(x, y+size*0.7, size, size*0.3);
+  // Draw circular stud
+  ctx.beginPath();
+  ctx.arc(x+size/2, y+size/2, size*0.32, 0, 2*Math.PI);
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x+size/2, y+size/2, size*0.22, 0, 2*Math.PI);
+  ctx.fillStyle = "rgba(0,0,0,0.12)";
+  ctx.fill();
+}
+
+// Main mosaic function
+function makeMosaic(img, size, canvas, instructionsDiv) {
+  const tiles = size;
+  const ctx = canvas.getContext("2d");
+  // Set canvas size for display
+  const px = Math.min(800, window.innerWidth-40, window.innerHeight-220);
+  canvas.width = canvas.height = px;
+  ctx.clearRect(0,0,px,px);
+  // Draw image to temp canvas for sampling
+  const tempCV = document.createElement("canvas");
+  tempCV.width = tempCV.height = tiles;
+  const tctx = tempCV.getContext("2d");
+  // Center-crop and fit image to square
+  const minL = Math.min(img.width, img.height);
+  tctx.drawImage(img, (img.width-minL)/2, (img.height-minL)/2, minL, minL, 0,0,tiles,tiles);
+  // For each tile, get avg colour and draw
+  const imgData = tctx.getImageData(0,0,tiles,tiles).data;
+  const tileSize = px / tiles;
+  let pieceCount = {}; // {colour: count}
+  let instrLines = [];
+  for (let y=0; y<tiles; ++y) {
+    let rowInstr = [];
+    for (let x=0; x<tiles; ++x) {
+      const idx = (y*tiles+x)*4;
+      const rgb = [imgData[idx], imgData[idx+1], imgData[idx+2]];
+      const cname = closestLego(rgb);
+      rowInstr.push(cname);
+      pieceCount[cname] = (pieceCount[cname]||0)+1;
+      drawPlate(ctx, x*tileSize, y*tileSize, tileSize, LEGO_COLOURS[cname]);
+    }
+    instrLines.push(rowInstr.map(n=>n[0].toUpperCase()).join(" "));
+  }
+  // Instructions output
+  let instrText = "Parts List:\n";
+  for (const cname of COLOUR_NAMES) {
+    if (pieceCount[cname]) instrText += `- ${cname}: ${pieceCount[cname]}\n`;
+  }
+  instrText += "\nBuild Plan (top to bottom, left to right):\n";
+  instrText += instrLines.join("\n");
+  instructionsDiv.textContent = instrText;
+}
+
+// File/image load logic
+let loadedImg = null;
+document.getElementById("imgfile").addEventListener("change", ev => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  const img = new window.Image();
+  img.onload = () => { loadedImg = img; };
+  img.src = URL.createObjectURL(file);
+});
+document.getElementById("make").onclick = () => {
+  if (!loadedImg) {
+    alert("Please upload an image first.");
+    return;
+  }
+  const size = parseInt(document.getElementById("size").value) || 48;
+  makeMosaic(loadedImg, size, document.getElementById("preview"), document.getElementById("instructions"));
+};
+// Example image for demo
+window.addEventListener('DOMContentLoaded', ()=>{
+  let img = new window.Image();
+  img.onload = () => { loadedImg = img; };
+  img.src = 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/6e/Golde33443.jpg/320px-Golde33443.jpg';
+});
+</script>
+</body>
+</html>
